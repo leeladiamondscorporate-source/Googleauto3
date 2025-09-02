@@ -1,36 +1,82 @@
-name: Run Workflow Every Two Days
-
+name: Daily Script Runner with Auto-Keep-Alive
 on:
   schedule:
-    - cron: "30 0 * * *"  # Runs at midnight every day
+    - cron: "30 1 * * *"  # Runs daily at 1:30 UTC
   workflow_dispatch:      # Allows manual triggering
 
 jobs:
   run-script:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write  # Required for auto-commits to keep repo active
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v2
-
-      - name: Set up Python
-        uses: actions/setup-python@v2
+        uses: actions/checkout@v4
         with:
-          python-version: '3.9'
-
+          token: ${{ secrets.GITHUB_TOKEN }}
+          
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+          
+      - name: Cache pip dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+            
       - name: Install dependencies
         run: |
           pip install --upgrade pip
           pip install -r requirements.txt
-
+          
       - name: Set up Google Cloud Credentials
         env:
           GCP_CREDENTIALS: ${{ secrets.GCP_CREDENTIALS }}
         run: |
           echo "$GCP_CREDENTIALS" > /tmp/gcp_credentials.json
-
+          chmod 600 /tmp/gcp_credentials.json
+          
       - name: Run the script
         env:
           GOOGLE_APPLICATION_CREDENTIALS: /tmp/gcp_credentials.json
           BUCKET_NAME: sitemaps.leeladiamond.com
           BUCKET_FOLDER: Googlefinal
         run: python main.py
+        
+      - name: Keep workflow active with auto-commit
+        run: |
+          # Create or update a keep-alive file with current timestamp
+          echo "Last workflow run: $(date -u)" > .github/keep-alive.txt
+          echo "Workflow status: Active" >> .github/keep-alive.txt
+          echo "Next run: $(date -u -d '+1 day')" >> .github/keep-alive.txt
+          
+          # Configure git
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          
+          # Add and commit the keep-alive file
+          git add .github/keep-alive.txt
+          
+          # Check if there are changes to commit
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "🤖 Keep workflow active - $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+            git push
+            echo "Keep-alive commit pushed successfully"
+          fi
+          
+      - name: Log completion
+        run: |
+          echo "✅ Workflow completed successfully at $(date -u)"
+          echo "📅 Next run scheduled for tomorrow at 1:30 UTC"
+          echo "🔄 Repository kept active with auto-commit"
+          
+      - name: Clean up credentials
+        if: always()
+        run: |
+          rm -f /tmp/gcp_credentials.json
