@@ -188,7 +188,7 @@ def process_files_to_cad(files_to_load, output_file):
                 "lab_grown": {
                     "title": lambda row: f"{row['shape']}-{row['carats']} Carats-{row['col']} Color-{row['clar']} Clarity-{row['lab']} Certified-{row['shape']}-Lab Grown Diamond",
                     "description": lambda row: f"Discover sustainable luxury with our lab-grown {row['shape']} diamond: {row['carats']} carats, {row['col']} color, and {row['clar']} clarity. Measurements: {row['length']}-{row['width']}x{row['height']} mm. Cut: {row['cut']}, Polish: {row['pol']}, Symmetry: {row['symm']}, Table: {row['table']}%, Depth: {row['depth']}%, Fluorescence: {row['flo']}. {row['lab']} certified {row['shape']}",
-                    "link": lambda row: f"https://leeladiamond.com/pages/lab-grown-diamond-catalog?id={row['ReportNo']}"
+                    "link": lambda row: f"https://leeladiamond.com/pages/lab-grown-diamonds/{row['shape'].lower()}-{row['carats'].replace('.', '-')}-carat-{row['cut'].replace(' ', '-').lower()}-{row['clar'].lower()}-clarity-{row['lab'].lower()}-certified-{row['ReportNo']}"
                 },
                 "gemstone": {
                     "title": lambda row: f"{row['shape']} {row['Color']} {row['gemType']} Gemstone - {row['carats']} Carats, {row['Clarity']} Clarity, {row['Cut']} Cut, {row['Lab']} Certified",
