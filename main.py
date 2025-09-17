@@ -160,11 +160,21 @@ def process_files_to_cad(files_to_load, output_file):
             )
 
             # ---- PRICE: convert existing markupPrice (assumed USD) -> CAD; show on 'price' ----
-            df['markupPrice'] = pd.to_numeric(df.get('markupPrice', 0), errors='coerce').fillna(0)
+            if 'markupPrice' in df.columns:
+                df['markupPrice'] = pd.to_numeric(df['markupPrice'], errors='coerce')
+            else:
+                # create a zero series if the column doesn't exist
+                df['markupPrice'] = pd.Series(0.0, index=df.index)
+            
+            df['markupPrice'] = df['markupPrice'].fillna(0.0).astype(float)
             df['markupPrice'] = df['markupPrice'].apply(convert_to_cad)
+            
+            # Google Merchant Center price format
             df['price'] = df['markupPrice'].map(lambda x: f"{x:.2f} CAD")
             df['markupCurrency'] = 'CAD'
 
+
+      
             # Add required feed columns (with safe fallbacks)
             df['ReportNo'] = df.get('ReportNo', '')
             df['id'] = df['ReportNo'].astype(str) + "CA"
