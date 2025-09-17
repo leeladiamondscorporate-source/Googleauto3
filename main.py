@@ -113,30 +113,17 @@ SHAPE_IMAGE_URLS = {
     "TRILLIANT": "https://storage.googleapis.com/sitemaps.leeladiamond.com/shapes/TRILLIANT.jpg",
 }
 
-def convert_to_cad(price_usd):
-    """Convert price from USD to CAD using a fixed exchange rate."""
-    cad_rate = 1.46
-    try:
-        return round(price_usd * cad_rate, 2)
-    except Exception as e:
-        print(f"Error in currency conversion: {e}")
-        return price_usd
+    def convert_to_cad(price_usd):
+                """Convert price from USD to CAD using a fixed exchange rate."""
+                cad_rate = 1.41  # <-- update this periodically or make it an ENV var
+                try:
+                    price_usd = float(price_usd)  # ensures numeric input
+                    return round(price_usd * cad_rate, 2)
+                except (ValueError, TypeError) as e:
+                    print(f"[WARN] Currency conversion skipped for invalid value {price_usd}: {e}")
+                    return 0.0  # safer to return 0.0 instead of unconverted USD
 
-def apply_markup(price):
-    """Apply markup to the price based on predefined tiers."""
-    base = price * 1.05 * 1.13
-    additional = (
-        210 if price <= 500 else
-        375 if price <= 1000 else
-        500 if price <= 1500 else
-        700 if price <= 2000 else
-        900 if price <= 2500 else
-        1100 if price <= 3000 else
-        1200 if price <= 5000 else
-        1500 if price <= 100000 else
-        0
-    )
-    return round(base + additional, 2)
+
 
 def process_files_to_cad(files_to_load, output_file):
     """Process input CSV files, apply transformations, and save to a combined file."""
@@ -161,11 +148,16 @@ def process_files_to_cad(files_to_load, output_file):
                 else SHAPE_IMAGE_URLS.get(row['shape'], ''),
                 axis=1
             )
-
-            # Convert price and apply markup
-            df['price'] = pd.to_numeric(df.get('price', 0), errors='coerce').fillna(0)
-            df['price'] = df['price'].apply(apply_markup).apply(convert_to_cad)
-            df['price'] = df['price'].astype(str) + " CAD"
+                
+                           # Take existing markupPrice (USD), convert to CAD, overwrite price column
+                df['markupPrice'] = pd.to_numeric(df.get('markupPrice', 0), errors='coerce').fillna(0)
+                
+                # Convert to CAD (no markup applied)
+                df['markupPrice'] = df['markupPrice'].apply(convert_to_cad)
+                
+                # Show converted CAD value in price column for Google Merchant Center
+                df['price'] = df['markupPrice'].map(lambda x: f"{x:.2f} CAD")
+                df['markupCurrency'] = 'CAD'
 
             # Add additional columns
             df['id'] = df['ReportNo'] + "CA"
