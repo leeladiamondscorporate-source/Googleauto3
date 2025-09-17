@@ -11,8 +11,8 @@ from flask import jsonify
 
 # The GOOGLE_APPLICATION_CREDENTIALS environment variable should be set externally.
 # Bucket details are loaded from environment variables.
-bucket_name = os.environ.get("BUCKET_NAME")  # e.g., "sitemaps.leeladiamond.com"
-bucket_folder = os.environ.get("BUCKET_FOLDER")  # e.g., "Googlefinal"
+bucket_name = os.environ.get("BUCKET_NAME")       # e.g., "sitemaps.leeladiamond.com"
+bucket_folder = os.environ.get("BUCKET_FOLDER")   # e.g., "Googlefinal"
 
 # Directories for file storage (using Linux paths)
 local_output_directory = os.environ.get("LOCAL_OUTPUT_DIRECTORY", "/tmp/output")
@@ -31,45 +31,44 @@ FTP_PASSWORD = "1yH£lG4n0Mq"
 # Mapping product types to FTP file details and local save paths
 ftp_files = {
     "natural": {
-         "remote_filename": "Leela Diamond_natural.csv",
-         "local_path": os.path.join(ftp_download_dir, "Natural.csv")
+        "remote_filename": "Leela Diamond_natural.csv",
+        "local_path": os.path.join(ftp_download_dir, "Natural.csv"),
     },
     "lab_grown": {
-         "remote_filename": "Leela Diamond_labgrown.csv",
-         "local_path": os.path.join(ftp_download_dir, "Labgrown.csv")
+        "remote_filename": "Leela Diamond_labgrown.csv",
+        "local_path": os.path.join(ftp_download_dir, "Labgrown.csv"),
     },
     "gemstone": {
-         "remote_filename": "Leela Diamond_gemstones.csv",
-         "local_path": os.path.join(ftp_download_dir, "gemstones.csv")
-    }
+        "remote_filename": "Leela Diamond_gemstones.csv",
+        "local_path": os.path.join(ftp_download_dir, "gemstones.csv"),
+    },
 }
 
 # ----------------------------
-# FTP DOWNLOAD FUNCTION
+# FTP DOWNLOAD FUNCTIONS
 # ----------------------------
 
 def download_file_from_ftp(remote_filename, local_path):
     """Download a file from the FTP server to a local path."""
     try:
         with ftplib.FTP() as ftp:
-            ftp.connect(FTP_SERVER, FTP_PORT)
+            ftp.connect(FTP_SERVER, FTP_PORT, timeout=30)
             ftp.login(FTP_USERNAME, FTP_PASSWORD)
             with open(local_path, 'wb') as f:
                 ftp.retrbinary(f"RETR {remote_filename}", f.write)
-            print(f"Downloaded {remote_filename} to {local_path}")
+        print(f"Downloaded {remote_filename} to {local_path}")
     except Exception as e:
         print(f"Error downloading {remote_filename}: {e}")
 
 def download_all_files():
     """Download all defined files from the FTP server."""
-    for product_type, file_info in ftp_files.items():
+    for _, file_info in ftp_files.items():
         download_file_from_ftp(file_info["remote_filename"], file_info["local_path"])
 
 # ----------------------------
-# DATA PROCESSING FUNCTIONS
+# IMAGE FALLBACKS
 # ----------------------------
 
-# Mapping shapes to default image URLs
 SHAPE_IMAGE_URLS = {
     "ASSCHER": "https://storage.googleapis.com/sitemaps.leeladiamond.com/shapes/ASSCHER.jpg",
     "BAGUETTE": "https://storage.googleapis.com/sitemaps.leeladiamond.com/shapes/BAGUETTE.jpg",
@@ -127,48 +126,48 @@ def convert_to_cad(price_usd):
         print(f"[WARN] Currency conversion skipped for invalid value {price_usd}: {e}")
         return 0.0  # safer fallback
 
-# (If you keep apply_markup, define it here too — aligned at the same indent)
-
-
-
+# ----------------------------
+# DATA PROCESSING
+# ----------------------------
 
 def process_files_to_cad(files_to_load, output_file):
     """Process input CSV files, apply transformations, and save to a combined file."""
     try:
         all_data = []
+
         for product_type, file_info in files_to_load.items():
             input_file = file_info["file_path"]
+            if not os.path.exists(input_file):
+                print(f"Missing input file: {input_file}")
+                continue
 
             # Load the CSV file
             df = pd.read_csv(input_file, dtype=str).fillna('')
 
-            # Clean shape and image columns (if they exist)
+            # Clean shape
             if 'shape' in df.columns:
                 df['shape'] = df['shape'].str.strip().str.upper()
 
+            # Extract direct image URLs if present
             if 'image' in df.columns:
-                df['image'] = df['image'].str.extract(r'(https?://.*\.(jpg|png|webp))')[0]
+                df['image'] = df['image'].str.extract(r'(https?://.*\.(?:jpg|jpeg|png|webp))', expand=False)
 
             # Assign default image if no valid URL is found
             df['image_link'] = df.apply(
-                lambda row: row['image'] if pd.notna(row['image']) and row['image']
-                else SHAPE_IMAGE_URLS.get(row['shape'], ''),
+                lambda row: row['image'] if pd.notna(row.get('image')) and row.get('image')
+                else SHAPE_IMAGE_URLS.get(row.get('shape', ''), ''),
                 axis=1
             )
-                                       # Take existing markupPrice (USD), convert to CAD, overwrite price column
+
+            # ---- PRICE: convert existing markupPrice (assumed USD) -> CAD; show on 'price' ----
             df['markupPrice'] = pd.to_numeric(df.get('markupPrice', 0), errors='coerce').fillna(0)
-                
-                # Convert to CAD (no markup applied)
             df['markupPrice'] = df['markupPrice'].apply(convert_to_cad)
-                
-                # Show converted CAD value in price column for Google Merchant Center
             df['price'] = df['markupPrice'].map(lambda x: f"{x:.2f} CAD")
             df['markupCurrency'] = 'CAD'
-                
 
-
-            # Add additional columns
-            df['id'] = df['ReportNo'] + "CA"
+            # Add required feed columns (with safe fallbacks)
+            df['ReportNo'] = df.get('ReportNo', '')
+            df['id'] = df['ReportNo'].astype(str) + "CA"
             df['availability'] = 'in_stock'
             df['google_product_category'] = '188'
             df['brand'] = 'Leela Diamonds'
@@ -181,31 +180,72 @@ def process_files_to_cad(files_to_load, output_file):
             # Product-specific templates
             product_templates = {
                 "natural": {
-                    "title": lambda row: f"{row['shape']}-{row['carats']} Carats-{row['col']} Color-{row['clar']} Clarity-{row['lab']} Certified-{row['shape']}-Natural Diamond",
-                    "description": lambda row: f"Discover sustainable luxury with our natural {row['shape']} diamond: {row['carats']} carats, {row['col']} color, and {row['clar']} clarity. Measurements: {row['length']}-{row['width']}x{row['height']} mm. Cut: {row['cut']}, Polish: {row['pol']}, Symmetry: {row['symm']}, Table: {row['table']}%, Depth: {row['depth']}%, Fluorescence: {row['flo']}. {row['lab']} certified {row['shape']}",
-                    "link": lambda row: f"https://leeladiamond.com/pages/natural-diamond-catalog?id={row['ReportNo']}"
+                    "title": lambda row: f"{row.get('shape','')}-{row.get('carats','')} Carats-{row.get('col','')} Color-{row.get('clar','')} Clarity-{row.get('lab','')} Certified-{row.get('shape','')}-Natural Diamond",
+                    "description": lambda row: (
+                        f"Discover sustainable luxury with our natural {row.get('shape','')} diamond: "
+                        f"{row.get('carats','')} carats, {row.get('col','')} color, and {row.get('clar','')} clarity. "
+                        f"Measurements: {row.get('length','')}-{row.get('width','')}x{row.get('height','')} mm. "
+                        f"Cut: {row.get('cut','')}, Polish: {row.get('pol','')}, Symmetry: {row.get('symm','')}, "
+                        f"Table: {row.get('table','')}%, Depth: {row.get('depth','')}%, Fluorescence: {row.get('flo','')}. "
+                        f"{row.get('lab','')} certified {row.get('shape','')}"
+                    ),
+                    "link": lambda row: f"https://leeladiamond.com/pages/natural-diamond-catalog?id={row.get('ReportNo','')}"
                 },
                 "lab_grown": {
-                    "title": lambda row: f"{row['shape']}-{row['carats']} Carats-{row['col']} Color-{row['clar']} Clarity-{row['lab']} Certified-{row['shape']}-Lab Grown Diamond",
-                    "description": lambda row: f"Discover sustainable luxury with our lab-grown {row['shape']} diamond: {row['carats']} carats, {row['col']} color, and {row['clar']} clarity. Measurements: {row['length']}-{row['width']}x{row['height']} mm. Cut: {row['cut']}, Polish: {row['pol']}, Symmetry: {row['symm']}, Table: {row['table']}%, Depth: {row['depth']}%, Fluorescence: {row['flo']}. {row['lab']} certified {row['shape']}",
-                    "link": lambda row: f"https://leeladiamond.com/pages/lab-grown-diamonds/{row['shape'].lower()}-{row['carats'].replace('.', '-')}-carat-{row['cut'].replace(' ', '-').lower()}-{row['clar'].lower()}-clarity-{row['lab'].lower()}-certified-{row['ReportNo']}"
+                    "title": lambda row: f"{row.get('shape','')}-{row.get('carats','')} Carats-{row.get('col','')} Color-{row.get('clar','')} Clarity-{row.get('lab','')} Certified-{row.get('shape','')}-Lab Grown Diamond",
+                    "description": lambda row: (
+                        f"Discover sustainable luxury with our lab-grown {row.get('shape','')} diamond: "
+                        f"{row.get('carats','')} carats, {row.get('col','')} color, and {row.get('clar','')} clarity. "
+                        f"Measurements: {row.get('length','')}-{row.get('width','')}x{row.get('height','')} mm. "
+                        f"Cut: {row.get('cut','')}, Polish: {row.get('pol','')}, Symmetry: {row.get('symm','')}, "
+                        f"Table: {row.get('table','')}%, Depth: {row.get('depth','')}%, Fluorescence: {row.get('flo','')}. "
+                        f"{row.get('lab','')} certified {row.get('shape','')}"
+                    ),
+                    # SEO-friendly link (carats 1.50 -> 1-50, lowercased, hyphenated)
+                    "link": lambda row: (
+                        "https://leeladiamond.com/pages/lab-grown-diamonds/"
+                        f"{str(row.get('shape','')).lower()}-"
+                        f"{str(row.get('carats','')).replace('.', '-')}-carat-"
+                        f"{str(row.get('cut','')).replace(' ', '-').lower()}-"
+                        f"{str(row.get('clar','')).lower()}-clarity-"
+                        f"{str(row.get('lab','')).lower()}-certified-"
+                        f"{str(row.get('ReportNo',''))}"
+                    )
                 },
                 "gemstone": {
-                    "title": lambda row: f"{row['shape']} {row['Color']} {row['gemType']} Gemstone - {row['carats']} Carats, {row['Clarity']} Clarity, {row['Cut']} Cut, {row['Lab']} Certified",
-                    "description": lambda row: f"{row['shape']} {row['gemType']} {row['Color']} Gemstone - {row['carats']} carats, clarity: {row['Clarity']}, cut: {row['Cut']}, lab: {row['Lab']}, treatment: {row['Treatment']}, origin: {row['Mine of Origin']}, size: {row['length']}x{row['width']} mm.",
-                    "link": lambda row: f"https://leeladiamond.com/pages/gemstone-catalog?id={row['ReportNo']}"
+                    "title": lambda row: f"{row.get('shape','')} {row.get('Color','')} {row.get('gemType','')} Gemstone - {row.get('carats','')} Carats, {row.get('Clarity','')} Clarity, {row.get('Cut','')} Cut, {row.get('Lab','')} Certified",
+                    "description": lambda row: (
+                        f"{row.get('shape','')} {row.get('gemType','')} {row.get('Color','')} Gemstone - "
+                        f"{row.get('carats','')} carats, clarity: {row.get('Clarity','')}, cut: {row.get('Cut','')}, "
+                        f"lab: {row.get('Lab','')}, treatment: {row.get('Treatment','')}, "
+                        f"origin: {row.get('Mine of Origin','')}, size: {row.get('length','')}x{row.get('width','')} mm."
+                    ),
+                    "link": lambda row: f"https://leeladiamond.com/pages/gemstone-catalog?id={row.get('ReportNo','')}"
                 }
             }
 
-            template = product_templates[product_type]
+            template = product_templates.get(product_type)
+            if template is None:
+                print(f"Unknown product type: {product_type}")
+                continue
+
             df['title'] = df.apply(template['title'], axis=1)
             df['description'] = df.apply(template['description'], axis=1)
             df['link'] = df.apply(template['link'], axis=1)
 
             # Select final columns
-            df = df[['id', 'title', 'description', 'link', 'image_link', 'availability', 'price',
-                     'google_product_category', 'brand', 'mpn', 'condition', 'color', 'age_group', 'gender']]
+            final_cols = [
+                'id', 'title', 'description', 'link', 'image_link', 'availability', 'price',
+                'google_product_category', 'brand', 'mpn', 'condition', 'color', 'age_group', 'gender'
+            ]
+            for c in final_cols:
+                if c not in df.columns:
+                    df[c] = ''
+            df = df[final_cols]
             all_data.append(df)
+
+        if not all_data:
+            raise RuntimeError("No input files were processed; combined feed not created.")
 
         # Combine all product data and save to CSV
         combined_df = pd.concat(all_data, ignore_index=True)
@@ -227,14 +267,19 @@ def process_files_to_cad(files_to_load, output_file):
 def upload_files_to_bucket(bucket_name, bucket_folder, local_directory):
     """Upload all files in a local directory to a GCS bucket folder."""
     try:
+        if not bucket_name or not bucket_folder:
+            print("Skipping upload: BUCKET_NAME or BUCKET_FOLDER not set.")
+            return
         storage_client = storage.Client()
         bucket = storage_client.bucket(bucket_name)
 
         for file_name in os.listdir(local_directory):
             file_path = os.path.join(local_directory, file_name)
             if os.path.isfile(file_path):
-                destination_blob_name = f"{bucket_folder}/{file_name}"
+                destination_blob_name = f"{bucket_folder.rstrip('/')}/{file_name}"
                 blob = bucket.blob(destination_blob_name)
+                if file_name.lower().endswith('.csv'):
+                    blob.content_type = 'text/csv'
                 blob.upload_from_filename(file_path)
                 print(f"Uploaded {file_name} to {destination_blob_name}")
     except Exception as e:
@@ -247,18 +292,18 @@ def upload_files_to_bucket(bucket_name, bucket_folder, local_directory):
 def run_workflow():
     # Step 1: Download raw CSV files from the FTP server
     download_all_files()
-    
+
     # Step 2: Define file paths for processing (using ftp_download_dir)
     files_to_load = {
         "natural": {"file_path": os.path.join(ftp_download_dir, "Natural.csv")},
         "lab_grown": {"file_path": os.path.join(ftp_download_dir, "Labgrown.csv")},
-        "gemstone": {"file_path": os.path.join(ftp_download_dir, "gemstones.csv")}
+        "gemstone": {"file_path": os.path.join(ftp_download_dir, "gemstones.csv")},
     }
     output_file = os.path.join(local_output_directory, "combined_google_merchant_feed.csv")
-    
+
     # Step 3: Process the downloaded files and create a combined CSV
     process_files_to_cad(files_to_load, output_file)
-    
+
     # Step 4: Upload the combined CSV (and any other files in the output directory) to GCS
     upload_files_to_bucket(bucket_name, bucket_folder, local_output_directory)
     return "Workflow executed successfully."
