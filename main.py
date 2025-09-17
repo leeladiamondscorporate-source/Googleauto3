@@ -113,15 +113,22 @@ SHAPE_IMAGE_URLS = {
     "TRILLIANT": "https://storage.googleapis.com/sitemaps.leeladiamond.com/shapes/TRILLIANT.jpg",
 }
 
-    def convert_to_cad(price_usd):
-                """Convert price from USD to CAD using a fixed exchange rate."""
-                cad_rate = 1.41  # <-- update this periodically or make it an ENV var
-                try:
-                    price_usd = float(price_usd)  # ensures numeric input
-                    return round(price_usd * cad_rate, 2)
-                except (ValueError, TypeError) as e:
-                    print(f"[WARN] Currency conversion skipped for invalid value {price_usd}: {e}")
-                    return 0.0  # safer to return 0.0 instead of unconverted USD
+# ----------------------------
+# PRICING FUNCTIONS
+# ----------------------------
+
+def convert_to_cad(price_usd):
+    """Convert price from USD to CAD using a fixed exchange rate."""
+    cad_rate = 1.41  # set via ENV or config if needed
+    try:
+        price_usd = float(price_usd)  # ensure numeric
+        return round(price_usd * cad_rate, 2)
+    except (ValueError, TypeError) as e:
+        print(f"[WARN] Currency conversion skipped for invalid value {price_usd}: {e}")
+        return 0.0  # safer fallback
+
+# (If you keep apply_markup, define it here too — aligned at the same indent)
+
 
 
 
