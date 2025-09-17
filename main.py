@@ -214,12 +214,12 @@ def process_files_to_cad(files_to_load, output_file):
                     # SEO-friendly link (carats 1.50 -> 1-50, lowercased, hyphenated)
                     "link": lambda row: (
                         "https://leeladiamond.com/pages/lab-grown-diamonds/"
-                        f"{str(row.get('shape','')).lower()}-"
+                        f"{str(row.get('shape','')).strip().lower()}-"
                         f"{str(row.get('carats','')).replace('.', '-')}-carat-"
-                        f"{str(row.get('cut','')).replace(' ', '-').lower()}-"
-                        f"{str(row.get('clar','')).lower()}-clarity-"
-                        f"{str(row.get('lab','')).lower()}-certified-"
-                        f"{str(row.get('ReportNo',''))}"
+                        f"{str(row.get('col','')).strip().lower()}-color-"
+                        f"{str(row.get('clar','')).strip().lower()}-clarity-"
+                        f"{str(row.get('lab','')).strip().lower()}-certified-"
+                        f"{str(row.get('ReportNo','')).strip()}"
                     )
                 },
                 "gemstone": {
