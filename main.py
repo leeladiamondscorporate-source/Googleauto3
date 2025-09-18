@@ -177,13 +177,18 @@ def process_files_to_cad(files_to_load, output_file):
             df["shape"] = df["shape"].astype(str).str.strip().str.upper()
 
             # Image URL (extract direct image if extra text)
+           # Extract direct image URLs safely
             img_extracted = df["image"].astype(str).str.extract(
                 r'(https?://[^\s",>]+?\.(?:jpg|jpeg|png|webp))', expand=False
             )
-            df["image_link"] = img_extracted.fillna('')
+            
+            # Ensure result is a Series (not ndarray) so we can call fillna
+            img_series = pd.Series(img_extracted, index=df.index)
+            df["image_link"] = img_series.fillna('')
             df.loc[df["image_link"] == "", "image_link"] = df["shape"].map(
                 lambda s: SHAPE_IMAGE_URLS.get(str(s).upper(), "")
             )
+
 
             # ===== PRICE LOGIC (fixes zeros) =====
             # Primary = markupPrice in df (USD per your sample)
