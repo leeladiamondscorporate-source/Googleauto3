@@ -75,7 +75,7 @@ SHAPE_IMAGE_URLS = {
     "TAPERED BAGUETTE": "https://storage.googleapis.com/sitemaps.leeladiamond.com/shapes/TAPERED%20BAGUETTE.jpg",
     "TRAPEZOID": "https://storage.googleapis.com/sitemaps.leeladiamond.com/shapes/TRAPEZOID.jpg",
     "TRIANGULAR": "https://storage.googleapis.com/sitemaps.leeladiamond.com/shapes/TRIANGULAR.webp",
-    "TRILLIANT": "https://storage.googleapis.com/sitemaps.leeladiamond.com/shapes/TRILLIANT.jpg",
+    "TRILLIANT": "https://storage.googleapis.com/sitemaps/leeladiamond.com/shapes/TRILLIANT.jpg",
 }
 
 # ============================
@@ -129,6 +129,30 @@ def first_col(df: pd.DataFrame, names: list) -> str | None:
             return n
     return None
 
+def _extract_image_series(df: pd.DataFrame, col_name: str) -> pd.Series:
+    """
+    Always return a pandas Series of image URLs (or NaN/''), never an ndarray.
+    Handles cases where str.extract could yield ndarray/DataFrame.
+    """
+    if col_name not in df.columns:
+        return pd.Series([""] * len(df), index=df.index)
+
+    # Extract direct URL with known image extensions
+    extracted = df[col_name].astype(str).str.extract(
+        r'(https?://[^\s",>]+?\.(?:jpg|jpeg|png|webp))', expand=True
+    )
+
+    # If expand=True, 'extracted' is a DataFrame with a single column at index 0
+    if isinstance(extracted, pd.DataFrame):
+        series = extracted.iloc[:, 0]
+    else:
+        # In weird pandas versions/inputs, guard and coerce to Series
+        series = pd.Series(extracted, index=df.index)
+
+    # Ensure it's a Series aligned with df and supports fillna
+    series = pd.Series(series, index=df.index)
+    return series
+
 # ============================
 # FTP
 # ============================
@@ -164,60 +188,53 @@ def process_files_to_cad(files_to_load, output_file):
 
             df = safe_read_csv(input_file)
 
-            # Normalize core columns you listed
-            for col in ["shape","carats","col","clar","cut","pol","symm","flo","floCol",
-                        "length","width","height","depth","table","culet","lab","girdle",
-                        "ReportNo","image","video","pdf","markupPrice","markupCurrency",
-                        "price","pricePerCarat","mineOfOrigin","canadaMarkEligible","isReturnable",
-                        "deliveredPrice","minDeliveryDays","maxDeliveryDays","diamondId","stockId","ID"]:
+            # Ensure these columns exist (based on your provided schema)
+            required_cols = [
+                "shape","carats","col","clar","cut","pol","symm","flo","floCol",
+                "length","width","height","depth","table","culet","lab","girdle",
+                "ReportNo","image","video","pdf","markupPrice","markupCurrency",
+                "price","pricePerCarat","mineOfOrigin","canadaMarkEligible","isReturnable",
+                "deliveredPrice","minDeliveryDays","maxDeliveryDays","diamondId","stockId","ID"
+            ]
+            for col in required_cols:
                 if col not in df.columns:
                     df[col] = ""
 
-            # Clean SHAPE
+            # SHAPE normalization
             df["shape"] = df["shape"].astype(str).str.strip().str.upper()
 
-            # Image URL (extract direct image if extra text)
-           # Extract direct image URLs safely
-            img_extracted = df["image"].astype(str).str.extract(
-                r'(https?://[^\s",>]+?\.(?:jpg|jpeg|png|webp))', expand=False
-            )
-            
-            # Ensure result is a Series (not ndarray) so we can call fillna
-            img_series = pd.Series(img_extracted, index=df.index)
-            df["image_link"] = img_series.fillna('')
+            # --------- IMAGE handling (fixed) ----------
+            img_series = _extract_image_series(df, "image")
+            # Use shape fallback where missing
+            df["image_link"] = img_series
+            df["image_link"] = df["image_link"].fillna('')
             df.loc[df["image_link"] == "", "image_link"] = df["shape"].map(
                 lambda s: SHAPE_IMAGE_URLS.get(str(s).upper(), "")
             )
 
-
-            # ===== PRICE LOGIC (fixes zeros) =====
-            # Primary = markupPrice in df (USD per your sample)
+            # --------- PRICE handling ----------
             usd_series = parse_money_to_float(df["markupPrice"])
-
-            # If markupCurrency == CAD, keep as CAD; if USD/blank -> convert
             curr = df["markupCurrency"].astype(str).str.strip().str.upper().replace({"": "USD"})
             rate = usd_to_cad_rate()
 
-            price_cad = []
-            for p, c in zip(usd_series, curr):
+            def _to_cad(p, c):
                 if pd.isna(p):
-                    price_cad.append(0.0)
-                else:
-                    if c == "CAD":
-                        price_cad.append(round(float(p), 2))
-                    else:
-                        # treat as USD
-                        price_cad.append(round(float(p) * rate, 2))
+                    return 0.0
+                if c == "CAD":
+                    return round(float(p), 2)
+                # treat everything else as USD
+                return round(float(p) * rate, 2)
 
-            df["price_cad"] = pd.to_numeric(price_cad, errors="coerce").fillna(0.0)
-            df["price"] = df["price_cad"].map(lambda x: f"{x:.2f} CAD")
-            df["markupCurrency"] = "CAD"  # feed currency
+            df["price_cad"] = [ _to_cad(p, c) for p, c in zip(usd_series, curr) ]
+            df["price"] = pd.to_numeric(df["price_cad"], errors="coerce").fillna(0.0).map(lambda x: f"{x:.2f} CAD")
+            df["markupCurrency"] = "CAD"
 
-            priced_rows = (df["price_cad"] > 0).sum()
+            priced_rows = int((pd.to_numeric(df["price_cad"], errors="coerce").fillna(0.0) > 0).sum())
             print(f"[PRICE][{product_type}] rows={len(df)} | priced(>0 CAD)={priced_rows}")
 
-            # IDs / meta
+            # --------- IDs / meta ----------
             df["ReportNo"] = df["ReportNo"].astype(str).str.strip()
+            # fallback to diamondId if ReportNo missing
             df["id"] = (df["ReportNo"].where(df["ReportNo"] != "", df["diamondId"].astype(str)) + "CA").fillna("")
 
             df["availability"] = "in_stock"
@@ -229,7 +246,7 @@ def process_files_to_cad(files_to_load, output_file):
             df["age_group"] = "adult"
             df["gender"] = "unisex"
 
-            # Titles / descriptions / links (clean measurements)
+            # --------- Titles / Descriptions / Links ----------
             def natural_title(r):
                 return f"{r.get('shape','')}-{r.get('carats','')} Carats-{r.get('col','')} Color-{r.get('clar','')} Clarity-{r.get('lab','')} Certified-{r.get('shape','')}-Natural Diamond"
 
@@ -263,7 +280,6 @@ def process_files_to_cad(files_to_load, output_file):
                 )
 
             def lab_link(r):
-                # pretty SEO path with report number
                 return (
                     "https://leeladiamond.com/pages/lab-grown-diamonds/"
                     f"{str(r.get('shape','')).strip().lower()}-"
