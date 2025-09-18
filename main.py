@@ -40,7 +40,7 @@ SHAPE_IMAGE_URLS = {
     "BRIOLETTE": "https://storage.googleapis.com/sitemaps.leeladiamond.com/shapes/BRIOLETTE.webp",
     "BULLET": "https://storage.googleapis.com/sitemaps.leeladiamond.com/shapes/BULLET.jpeg",
     "CALF": "https://storage.googleapis.com/sitemaps.leeladiamond.com/shapes/CALF.webp",
-    "CUSHION": "https://storage.googleapis.com/sitemaps/leeladiamond.com/shapes/CUSHION.jpg",
+    "CUSHION": "https://storage.googleapis.com/sitemaps.leeladiamond.com/shapes/CUSHION.jpg",
     "CUSHION BRILLIANT": "https://storage.googleapis.com/sitemaps.leeladiamond.com/shapes/CUSHION%20BRILLIANT.webp",
     "CUSHION MODIFIED": "https://storage.googleapis.com/sitemaps.leeladiamond.com/shapes/CUSHION%20MODIFIED.jpg",
     "EMERALD": "https://storage.googleapis.com/sitemaps.leeladiamond.com/shapes/EMERALD.jpg",
@@ -68,12 +68,12 @@ SHAPE_IMAGE_URLS = {
     "ROUND": "https://storage.googleapis.com/sitemaps.leeladiamond.com/shapes/ROUND.png",
     "SHIELD": "https://storage.googleapis.com/sitemaps.leeladiamond.com/shapes/SHIELD.webp",
     "SQUARE": "https://storage.googleapis.com/sitemaps.leeladiamond.com/shapes/SQUARE%20EMERALD.webp",
-    "SQUARE EMERALD": "https://storage.googleapis.com/sitemaps/leeladiamond.com/shapes/SQUARE%20EMERALD.webp",
+    "SQUARE EMERALD": "https://storage.googleapis.com/sitemaps.leeladiamond.com/shapes/SQUARE%20EMERALD.webp",
     "SQUARE RADIANT": "https://storage.googleapis.com/sitemaps.leeladiamond.com/shapes/SQUARE%20RADIANT.webp",
     "STAR": "https://storage.googleapis.com/sitemaps.leeladiamond.com/shapes/STAR.jpg",
     "TAPERED BAGUETTE": "https://storage.googleapis.com/sitemaps.leeladiamond.com/shapes/TAPERED%20BAGUETTE.jpg",
     "TRAPEZOID": "https://storage.googleapis.com/sitemaps.leeladiamond.com/shapes/TRAPEZOID.jpg",
-    "TRIANGULAR": "https://storage.googleapis.com/sitemaps.leeladiamond.com/shapes/TRIANGULAR.webp",
+    "TRIANGULAR": "https://storage.googleapis.com/sitemaps/leeladiamond.com/shapes/TRIANGULAR.webp",
     "TRILLIANT": "https://storage.googleapis.com/sitemaps.leeladiamond.com/shapes/TRILLIANT.jpg",
 }
 
@@ -102,7 +102,7 @@ def parse_money_to_float(series: pd.Series) -> pd.Series:
             return None
         s = str(v).strip()
         s = s.replace(",", "")
-        s = re.sub(r"(usd|cad|inr|aud|eur|£|€|\$)", "", s, flags=re.IGNORECASE)
+        s = re.sub(r"(usd|cad|inr|aud|eur|gbp|£|€|\$)", "", s, flags=re.IGNORECASE)
         s = re.sub(r"[^0-9.\-]", "", s)
         if s.count(".") > 1:
             parts = s.split(".")
@@ -114,18 +114,16 @@ def parse_money_to_float(series: pd.Series) -> pd.Series:
     out = series.map(_clean)
     return pd.to_numeric(out, errors="coerce")
 
+# ——— Image extractor that NEVER returns ndarray ———
+IMG_RE = re.compile(r'(https?://[^\s",>]+?\.(?:jpg|jpeg|png|webp))', re.IGNORECASE)
+
 def extract_image_series(df: pd.DataFrame, col_name: str) -> pd.Series:
-    """Always return a Series from image column (never ndarray), then we can fillna."""
+    """Row-wise regex search; always returns a pandas Series of strings."""
     if col_name not in df.columns:
         return pd.Series([""] * len(df), index=df.index)
-    extracted = df[col_name].astype(str).str.extract(
-        r'(https?://[^\s",>]+?\.(?:jpg|jpeg|png|webp))', expand=True
+    return df[col_name].astype(str).apply(
+        lambda s: (IMG_RE.search(s).group(0) if IMG_RE.search(s) else "")
     )
-    if isinstance(extracted, pd.DataFrame):
-        series = extracted.iloc[:, 0]
-    else:
-        series = pd.Series(extracted, index=df.index)
-    return pd.Series(series, index=df.index)
 
 def get_first_col(df: pd.DataFrame, names: list) -> str | None:
     for n in names:
@@ -143,20 +141,15 @@ def fallback_measurements(row) -> str:
 
 def compute_price_cad(df: pd.DataFrame, product_type: str) -> pd.Series:
     """
-    Detect price for each product type using smart fallbacks:
-    1) markup_price / markupPrice
-    2) delivered_price / deliveredPrice
-    3) price
-    4) price_per_carat * carats (or pricePerCarat * carats)
-    Currency: markup_currency / markupCurrency (default USD)
+    Detect price per product type with fallbacks:
+      1) markup_price / markupPrice
+      2) delivered_price / deliveredPrice
+      3) price
+      4) price_per_carat * carats  (or pricePerCarat * carats)
+    Currency via markup_currency / markupCurrency (default USD).
     """
     rate = usd_to_cad_rate()
 
-    # Normalize obvious candidates
-    cols = df.columns
-
-    # Price candidates (ordered)
-    price_candidates = []
     if product_type == "lab_grown":
         price_candidates = ["markupPrice", "deliveredPrice", "price"]
         ppc_col = "pricePerCarat"
@@ -173,22 +166,22 @@ def compute_price_cad(df: pd.DataFrame, product_type: str) -> pd.Series:
         carats_col = "carats"
         currency_col = "markup_currency"
 
-    # Ensure missing columns exist as empty strings
+    # Ensure referenced columns exist
     for c in set(price_candidates + [ppc_col, carats_col, currency_col]):
-        if c and c not in cols:
+        if c and c not in df.columns:
             df[c] = ""
 
-    # Parse primary price
     used_source = pd.Series([""] * len(df), index=df.index)
     price_usd = pd.Series([None] * len(df), index=df.index, dtype="float64")
 
+    # Try candidates in order
     for cand in price_candidates:
         series = parse_money_to_float(df[cand]) if cand in df.columns else pd.Series([None]*len(df))
         take = price_usd.isna() & series.notna() & (series > 0)
         price_usd.loc[take] = series.loc[take]
         used_source.loc[take] = cand
 
-    # If still missing/zero, try PPC * carats
+    # Fallback: price_per_carat * carats
     missing = price_usd.isna() | (price_usd <= 0)
     if missing.any():
         ppc = parse_money_to_float(df[ppc_col]) if ppc_col in df.columns else pd.Series([None]*len(df))
@@ -196,11 +189,13 @@ def compute_price_cad(df: pd.DataFrame, product_type: str) -> pd.Series:
         ppc_total = (ppc * carats).where(ppc.notna() & carats.notna(), other=None)
         take_ppc = missing & ppc_total.notna() & (ppc_total > 0)
         price_usd.loc[take_ppc] = ppc_total.loc[take_ppc]
-        # mark source
         used_source.loc[take_ppc] = f"{ppc_col}*{carats_col}"
 
-    # Currency handling
-    curr = df[currency_col].astype(str).str.strip().str.upper().replace({"": "USD"}) if currency_col in df.columns else pd.Series(["USD"]*len(df), index=df.index)
+    # Currency
+    if currency_col in df.columns:
+        curr = df[currency_col].astype(str).str.strip().str.upper().replace({"": "USD"})
+    else:
+        curr = pd.Series(["USD"] * len(df), index=df.index)
 
     # Convert to CAD
     def to_cad(p, c):
@@ -208,16 +203,12 @@ def compute_price_cad(df: pd.DataFrame, product_type: str) -> pd.Series:
             return 0.0
         if c == "CAD":
             return round(float(p), 2)
-        # treat everything else as USD
         return round(float(p) * rate, 2)
 
-    price_cad = [to_cad(p, c) for p, c in zip(price_usd, curr)]
+    price_cad = pd.Series([to_cad(p, c) for p, c in zip(price_usd, curr)], index=df.index)
     price_cad = pd.to_numeric(price_cad, errors="coerce").fillna(0.0)
 
-    # Logs
-    print(f"[PRICE][{product_type}] rows={len(df)} | priced(>0 CAD)={(price_cad > 0).sum()} | sources used: "
-          f"{used_source.value_counts(dropna=False).to_dict()}")
-
+    print(f"[PRICE][{product_type}] rows={len(df)} | priced(>0 CAD)={(price_cad > 0).sum()} | sources={used_source.value_counts(dropna=False).to_dict()}")
     return price_cad
 
 # ============================
@@ -255,7 +246,7 @@ def process_files_to_cad(files_to_load, output_file):
 
             df = safe_read_csv(input_file)
 
-            # Normalize columns that we reference later
+            # Ensure columns we reference exist
             base_cols = ["shape","carats","col","clar","cut","pol","symm","flo","floCol",
                          "length","width","height","depth","table","culet","lab","girdle",
                          "ReportNo","image","video","pdf","diamondId","stockId","ID"]
@@ -268,10 +259,10 @@ def process_files_to_cad(files_to_load, output_file):
                 if c not in df.columns:
                     df[c] = ""
 
-            # Shape uppercase
+            # Normalize shape
             df["shape"] = df["shape"].astype(str).str.strip().str.upper()
 
-            # Image link (safe)
+            # Image link (robust)
             img_series = extract_image_series(df, "image")
             df["image_link"] = img_series.fillna('')
             df.loc[df["image_link"] == "", "image_link"] = df["shape"].map(lambda s: SHAPE_IMAGE_URLS.get(str(s).upper(), ""))
@@ -283,7 +274,6 @@ def process_files_to_cad(files_to_load, output_file):
             # IDs / meta
             df["ReportNo"] = df["ReportNo"].astype(str).str.strip()
             if product_type == "gemstone" and (df["ReportNo"] == "").all():
-                # gemstone sometimes uses ID as identifier
                 df["ReportNo"] = df["ID"].astype(str)
 
             df["id"] = (df["ReportNo"].where(df["ReportNo"] != "", df["diamondId"].astype(str)) + "CA").fillna("")
@@ -333,11 +323,11 @@ def process_files_to_cad(files_to_load, output_file):
                             f"{str(r.get('ReportNo','')).strip()}")
 
             else:  # gemstone
-                # Use gemType + Color + shape where present; include Treatment & Origin in description
                 def title(r):
+                    # Include gemType prominently
                     return f"{r.get('gemType','')} {r.get('Color','')} {r.get('shape','')} – {r.get('carats','')} Carats, {r.get('Clarity','')} Clarity, {r.get('Cut','')} Cut, {r.get('Lab','')} Certified"
                 def desc(r):
-                    treatment = r.get('Treatment','') or 'N/A'
+                    treatment = (r.get('Treatment','') or 'N/A').strip()
                     origin = (r.get('Mine of Origin','') or r.get('mine_of_origin','') or r.get('mineOfOrigin','') or '').strip()
                     origin_txt = f" Origin: {origin}." if origin else ""
                     return (f"{r.get('gemType','')} gemstone in {r.get('Color','')} color, "
